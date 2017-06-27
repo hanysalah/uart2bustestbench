@@ -1,5 +1,0 @@
-# vsim -do {run -all; q} -l questa.log -c -sv_lib ../../../lib/uvm_dpi hello_world 
-# Loading /var/tmp/hanysalah@ubuntu-vm_dpi_3668/linux_x86_64_gcc-4.7/export_tramp.so
-# ** Note: (vsim-3812) Design is being optimized...
-# ** Error: (vopt-1961) Can't create implicit optimized design in library /home/hanysalah/Desktop/training/uvm-1.2/examples/simple/hello_world/work.
-# Error loading design
