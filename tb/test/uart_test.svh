@@ -1,0 +1,1015 @@
+//-------------------------------------------------------------------------------------------------
+//
+//                             UART2BUS VERIFICATION
+//
+//-------------------------------------------------------------------------------------------------
+// CREATOR    : HANY SALAH
+// PROJECT    : UART2BUS UVM TEST BENCH
+// UNIT       : TEST
+//-------------------------------------------------------------------------------------------------
+// TITLE      : UART TEST 
+// DESCRIPTION: THIS COMPONENT INCLUDES THE MAIN TESTS THAT WILL BE FORCED TO THE DUT. IT INCLUDES
+//              VIRTUAL BASE TEST FUNCTION THAT SHARES THE MOST COMMON ATTRIBUTES OF ALL TESTS.
+//              THE TESTS IMPLEMENTED THROUGH BELOW ARE RELATED TO THE TESTBENCH SPECIFICATIONS 
+//              DOCUMENT. YOU CAN DOWNLOAD IT DIRECTLY THROUGH OPENCORES.COM OR FIND IT IN THE DOC
+//              DIRECTORY.
+//-------------------------------------------------------------------------------------------------
+// LOG DETAILS
+//-------------
+// VERSION      NAME        DATE        DESCRIPTION
+//    1       HANY SALAH    10012016    FILE CREATION
+//    2       HANY SALAH    20012016    ADD BINARY MODE TESTS AND INVALID TESTS
+//    3       HANY SALAH    12022016    IMPROVE BLOCK DESCRIPTION & ADD COMMENTS
+//    4       HANY SALAH    26062017    ADD COVERAGE DRIVEN TEST
+//-------------------------------------------------------------------------------------------------
+// ALL COPYRIGHTS ARE RESERVED FOR THE PRODUCER ONLY .THIS FILE IS PRODUCED FOR OPENCORES MEMBERS 
+// ONLY AND IT IS PROHIBTED TO USE THIS MATERIAL WITHOUT THE CREATOR'S PERMISSION
+//-------------------------------------------------------------------------------------------------
+
+//  The base test class that includes the uvm printer and establish the whole environment.
+//  It also responsible for setting the environment configurations described in details through the
+//  testbench specifications document.
+//  The environment configurations are set during the end of elaboration phase. It includes: 
+//    ----------------------------------------------------------------------------------------
+//  - The active edge   : The active clock edge at which, the data is changed on the UART buses.
+//                        It could be positive edge or negative edge.
+//    ----------------------------------------------------------------------------------------
+//  - The start bit     : Represent the sequence through which the byte is serialized; either to
+//                        start with the most significant bit or the least significant bit.
+//    ----------------------------------------------------------------------------------------
+//  - The data format   : The data representation through the text commands either to be ASCII
+//                        format or ordinary binary format.
+//    ----------------------------------------------------------------------------------------
+//  - The number of stop: The number of stop bits sent after the latest bit of each byte. It
+//    bit(s)              would be either one or two bits
+//    ----------------------------------------------------------------------------------------
+//  - The number of bits: The number of bits within each transferred field. It would be either 
+//    in the field        7 or 8 bits per field.
+//    ----------------------------------------------------------------------------------------
+//  - The parity mode   : The used parity type of each field. It would be either no parity bit,
+//                        odd parity or even parity.
+//    ----------------------------------------------------------------------------------------
+//  - The response time : Represent the maximum allowable time within which DUT should respond
+//                        to the driven request.
+//    ----------------------------------------------------------------------------------------
+//  - The false data    : Enable force false data on the output port within the read command 
+//    enable              through the both modes; text or binary.
+//    ----------------------------------------------------------------------------------------
+virtual class uart_base_test extends uvm_test;
+
+  uart_env          env;
+
+  uvm_table_printer printer;
+
+  uart_config       _config;
+
+  int               matched ;
+
+  `ifdef UVM_1p2
+   uvm_default_report_server    report_server;
+  `else
+   uvm_report_server    report_server;
+  `endif 
+  int               hit_text_cov=90;
+  int               hit_bin_cov=90;
+  int 		    hit_mode_cov=90; 
+   
+  `uvm_component_utils_begin(uart_base_test)
+     `uvm_field_int(matched,UVM_ALL_ON)
+  `uvm_component_utils_end
+
+  function new (string name,uvm_component parent);
+    super.new(name,parent);
+  endfunction:new
+
+  function void build_phase (uvm_phase phase);
+    super.build_phase(phase);
+
+    env = uart_env::type_id::create("env",this);
+
+    _config = uart_config::type_id::create("_config",this);
+    
+    printer = new();
+    `ifdef UVM_1p2
+     report_server = new("report_server");
+    `else
+     report_server = new();
+    `endif
+    env_configuration();
+    TE_configuration();
+    uvm_config_db#(uart_config)::set(this,"*","UART_CONFIGURATION",_config);
+    uvm_resource_db #(int)::set("coverage_cloud","text_coverage",0,null);
+    uvm_resource_db #(int)::set("coverage_cloud","binary_coverage",0,null); 
+    uvm_resource_db #(int)::set("coverage_cloud","general_coverage",0,null);
+  endfunction:build_phase
+
+  function void connect_phase (uvm_phase phase);
+    super.connect_phase(phase);
+  endfunction:connect_phase
+  
+  function void env_configuration ();
+    _config._edge         = pos_edge;
+    _config._start        = lsb;
+    _config._datamode     = ascii;
+    _config.num_stop_bits = 1;
+    _config.num_of_bits   = 8;
+    _config._paritymode   = parity_off;
+    _config.response_time = 8680;
+    _config.use_false_data= no;
+  endfunction:env_configuration
+
+ function void TE_configuration();
+    report_server.set_server(report_server);
+    printer.knobs.depth = 3;
+    uvm_resource_db#(int)::set("Reporting","matched_packets",0,null);
+    uvm_root::get().set_timeout(10s);
+    //uvm_root::get().finish_on_completion=1'b0;
+ endfunction // TE_configuration
+   
+  task run_phase (uvm_phase phase);
+    phase.phase_done.set_drain_time(this,5000);
+  endtask:run_phase
+
+  function void report_phase (uvm_phase phase);
+     int num_errors;
+     string status;
+     num_errors = report_server.get_severity_count(UVM_ERROR);
+     uvm_resource_db#(int)::read_by_name("Reporting","matched_packets",matched);
+     
+     if(num_errors == 0) status =  "PASSED";
+     else status = "FAILED";
+     $display("--------------------------------------------------\n");
+     $display("\t\t SIMULATION %s \n",status);
+     $display("--------------------------------------------------");
+     `uvm_info("FINAL STATUS",$sformatf("The number of matched packets are %0d",matched),UVM_NONE);
+  endfunction // report_phase
+   
+endclass:uart_base_test
+
+//-------------------------------------------------------------------------------------------------
+//
+//                          PURE TEXT MODE TESTS
+//
+//-------------------------------------------------------------------------------------------------
+
+  //  This test apply thirteen successive tests of UART write request using text communication mode.
+  //  Refer to test plan section in the testbench specifications document for more details.
+  class write_text_mode extends uart_base_test;
+    
+    seq_1p1   seq1;
+    seq_1p2   seq2;
+    seq_1p3   seq3;
+    seq_1p4   seq4;
+    seq_1p5   seq5;
+    seq_1p6   seq6;
+    seq_1p7   seq7;
+    seq_1p8   seq8;
+    seq_1p9   seq9;
+    seq_1p10  seq10;
+    seq_1p11  seq11;
+    seq_1p12  seq12;
+    seq_1p13  seq13;
+
+    `uvm_component_utils(write_text_mode)
+
+    function new (string name,uvm_component parent);
+      super.new(name,parent);
+    endfunction:new
+
+    function void build_phase (uvm_phase phase);
+      super.build_phase (phase);
+      seq1  = seq_1p1::type_id::create("seq1");
+      seq2  = seq_1p2::type_id::create("seq2");
+      seq3  = seq_1p3::type_id::create("seq3");
+      seq4  = seq_1p4::type_id::create("seq4");
+      seq5  = seq_1p5::type_id::create("seq5");
+      seq6  = seq_1p6::type_id::create("seq6");
+      seq7  = seq_1p7::type_id::create("seq7");
+      seq8  = seq_1p8::type_id::create("seq8");
+      seq9  = seq_1p9::type_id::create("seq9");
+      seq10 = seq_1p10::type_id::create("seq10");
+      seq11 = seq_1p11::type_id::create("seq11");
+      seq12 = seq_1p12::type_id::create("seq12");
+      seq13 = seq_1p13::type_id::create("seq13");
+    endfunction:build_phase
+
+
+    task run_phase (uvm_phase phase);
+      super.run_phase(phase);
+      phase.raise_objection(this);
+      seq1.start(env.agent._seq,null);
+      seq2.start(env.agent._seq,null);
+      seq3.start(env.agent._seq,null);
+      seq4.start(env.agent._seq,null);
+      seq5.start(env.agent._seq,null);
+      seq6.start(env.agent._seq,null);
+      seq7.start(env.agent._seq,null);
+      seq8.start(env.agent._seq,null);
+      seq9.start(env.agent._seq,null);
+      seq10.start(env.agent._seq,null);
+      seq11.start(env.agent._seq,null);
+      seq12.start(env.agent._seq,null);
+      seq13.start(env.agent._seq,null);
+      phase.drop_objection(this);
+    endtask:run_phase
+  endclass:write_text_mode
+
+  //  This test apply thirteen successive tests of UART read request using text communication mode.
+  //  Refer to test plan section in the testbench specifications document for more details.
+  class read_text_mode extends uart_base_test;
+    
+    seq_2p1   seq1;
+    seq_2p2   seq2;
+    seq_2p3   seq3;
+    seq_2p4   seq4;
+    seq_2p5   seq5;
+    seq_2p6   seq6;
+    seq_2p7   seq7;
+    seq_2p8   seq8;
+    seq_2p9   seq9;
+    seq_2p10  seq10;
+    seq_2p11  seq11;
+    seq_2p12  seq12;
+    seq_2p13  seq13;
+
+
+    `uvm_component_utils(read_text_mode)
+
+    function new (string name,uvm_component parent);
+      super.new(name,parent);
+    endfunction:new
+
+    function void build_phase (uvm_phase phase);
+      super.build_phase(phase);
+      seq1  = seq_2p1::type_id::create("seq1");
+      seq2  = seq_2p2::type_id::create("seq2");
+      seq3  = seq_2p3::type_id::create("seq3");
+      seq4  = seq_2p4::type_id::create("seq4");
+      seq5  = seq_2p5::type_id::create("seq5");
+      seq6  = seq_2p6::type_id::create("seq6");
+      seq7  = seq_2p7::type_id::create("seq7");
+      seq8  = seq_2p8::type_id::create("seq8");
+      seq9  = seq_2p9::type_id::create("seq9");
+      seq10 = seq_2p10::type_id::create("seq10");
+      seq11 = seq_2p11::type_id::create("seq11");
+      seq12 = seq_2p12::type_id::create("seq12");
+      seq13 = seq_2p13::type_id::create("seq13");
+    endfunction:build_phase
+
+    task run_phase (uvm_phase phase);
+      super.run_phase(phase);
+      phase.raise_objection(this);
+      seq1.start(env.agent._seq,null);
+      seq2.start(env.agent._seq,null);
+      seq3.start(env.agent._seq,null);
+      seq4.start(env.agent._seq,null);
+      seq5.start(env.agent._seq,null);
+      seq6.start(env.agent._seq,null);
+      seq7.start(env.agent._seq,null);
+      seq8.start(env.agent._seq,null);
+      seq9.start(env.agent._seq,null);
+      seq10.start(env.agent._seq,null);
+      seq11.start(env.agent._seq,null);
+      seq12.start(env.agent._seq,null);
+      seq13.start(env.agent._seq,null);
+      phase.drop_objection(this);
+    endtask:run_phase
+  endclass:read_text_mode
+
+//-------------------------------------------------------------------------------------------------
+//
+//                          PURE BINARY MODE TESTS
+//
+//-------------------------------------------------------------------------------------------------
+
+  //  This test apply six successive tests of UART nop request using binary communication mode.
+  //  Refer to test plan section in the testbench specifications document for more details.
+  class nop_command_mode extends uart_base_test;
+    
+    seq_3p1   seq1;
+    seq_3p2   seq2;
+    seq_3p3   seq3;
+    seq_4p1   seq4;
+    seq_4p2   seq5;
+    seq_4p3   seq6;
+
+    `uvm_component_utils(nop_command_mode)
+
+    function new (string name,uvm_component parent);
+      super.new(name,parent);
+    endfunction:new
+
+    function void build_phase (uvm_phase phase);
+      super.build_phase(phase);
+      seq1  = seq_3p1::type_id::create("seq1");
+      seq2  = seq_3p2::type_id::create("seq2");
+      seq3  = seq_3p3::type_id::create("seq3");
+      seq4  = seq_4p1::type_id::create("seq4");
+      seq5  = seq_4p2::type_id::create("seq5");
+      seq6  = seq_4p3::type_id::create("seq6");
+    endfunction:build_phase
+
+    task run_phase(uvm_phase phase);
+      super.run_phase(phase);
+      phase.raise_objection(this);
+      seq1.start(env.agent._seq,null);
+      seq2.start(env.agent._seq,null);
+      seq3.start(env.agent._seq,null);
+      seq4.start(env.agent._seq,null);
+      seq5.start(env.agent._seq,null);
+      seq6.start(env.agent._seq,null);
+      phase.drop_objection(this);
+    endtask:run_phase
+  endclass:nop_command_mode
+
+
+  //  This test apply ten successive tests of UART write request using binary communication mode.
+  //  Refer to test plan section in the testbench specifications document for more details.
+  class write_command_mode extends uart_base_test;
+    
+    seq_5p1   seq1;
+    seq_5p2   seq2;
+    seq_5p3   seq3;
+    seq_5p4   seq4;
+    seq_5p5   seq5;
+    seq_5p6   seq6;
+    seq_5p7   seq7;
+    seq_5p8   seq8;
+    seq_5p9   seq9;
+    seq_5p10  seq10;
+
+    `uvm_component_utils(write_command_mode)
+
+    function new (string name,uvm_component parent);
+      super.new(name,parent);
+    endfunction:new
+
+    function void build_phase (uvm_phase phase);
+      super.build_phase(phase);
+      seq1  = seq_5p1::type_id::create("seq1");
+      seq2  = seq_5p2::type_id::create("seq2");
+      seq3  = seq_5p3::type_id::create("seq3");
+      seq4  = seq_5p4::type_id::create("seq4");
+      seq5  = seq_5p5::type_id::create("seq5");
+      seq6  = seq_5p6::type_id::create("seq6");
+      seq7  = seq_5p7::type_id::create("seq7");
+      seq8  = seq_5p8::type_id::create("seq8");
+      seq9  = seq_5p9::type_id::create("seq9");
+      seq10 = seq_5p10::type_id::create("seq10");
+    endfunction:build_phase
+
+    task run_phase (uvm_phase phase);
+      super.run_phase(phase);
+      phase.raise_objection(this);
+      uvm_test_done.set_drain_time(this,5000);
+      //seq1.start(env.agent._seq,null);
+      seq2.start(env.agent._seq,null);
+      seq3.start(env.agent._seq,null);
+      seq4.start(env.agent._seq,null);
+      seq5.start(env.agent._seq,null);
+      seq6.start(env.agent._seq,null);
+      seq7.start(env.agent._seq,null);
+      seq8.start(env.agent._seq,null);
+      seq9.start(env.agent._seq,null);
+      seq10.start(env.agent._seq,null);
+      phase.drop_objection(this);
+    endtask:run_phase
+  endclass: write_command_mode
+
+
+  //  This test apply ten successive tests of UART read request using binary communication mode.
+  //  Refer to test plan section in the testbench specifications document for more details.
+  class read_command_mode extends uart_base_test;
+    
+    seq_6p1   seq1;
+    seq_6p2   seq2;
+    seq_6p3   seq3;
+    seq_6p4   seq4;
+    seq_6p5   seq5;
+    seq_6p6   seq6;
+    seq_6p7   seq7;
+    seq_6p8   seq8;
+    seq_6p9   seq9;
+    seq_6p10  seq10;
+
+    `uvm_component_utils(read_command_mode)
+
+    function new (string name,uvm_component parent);
+      super.new(name,parent);
+      seq1  = seq_6p1::type_id::create("seq1");
+      seq2  = seq_6p2::type_id::create("seq2");
+      seq3  = seq_6p3::type_id::create("seq3");
+      seq4  = seq_6p4::type_id::create("seq4");
+      seq5  = seq_6p5::type_id::create("seq5");
+      seq6  = seq_6p6::type_id::create("seq6");
+      seq7  = seq_6p7::type_id::create("seq7");
+      seq8  = seq_6p8::type_id::create("seq8");
+      seq9  = seq_6p9::type_id::create("seq9");
+      seq10 = seq_6p10::type_id::create("seq10");
+    endfunction:new
+
+    function void build_phase (uvm_phase phase);
+      super.build_phase(phase);
+
+    endfunction:build_phase
+
+    task run_phase (uvm_phase phase);
+      super.run_phase(phase);
+      phase.raise_objection(this);
+      //seq1.start(env.agent._seq,null);
+      seq2.start(env.agent._seq,null);
+      seq3.start(env.agent._seq,null);
+      seq4.start(env.agent._seq,null);
+      seq5.start(env.agent._seq,null);
+      seq6.start(env.agent._seq,null);
+      seq7.start(env.agent._seq,null);
+      seq8.start(env.agent._seq,null);
+      seq9.start(env.agent._seq,null);
+      seq10.start(env.agent._seq,null);
+      phase.drop_objection(this);
+    endtask:run_phase
+  endclass:read_command_mode
+
+//-------------------------------------------------------------------------------------------------
+//
+//                        COMBINED COMMAND TESTS
+//
+//-------------------------------------------------------------------------------------------------
+
+  // this test randomly apply series of 100 text mode commands. They would be either read or write
+  // sequences described in text mode tests in the testbench specifications document.
+  class text_mode_test extends uart_base_test;
+    
+    rand int unsigned command_number;
+
+    bit coverage_hit = 1'b0;
+     
+    seq_1p1   seq1;
+    seq_1p2   seq2;
+    seq_1p3   seq3;
+    seq_1p4   seq4;
+    seq_1p5   seq5;
+    seq_1p6   seq6;
+    seq_1p7   seq7;
+    seq_1p8   seq8;
+    seq_1p9   seq9;
+    seq_1p10  seq10;
+    seq_1p11  seq11;
+    seq_1p12  seq12;
+    seq_1p13  seq13;
+
+
+    seq_2p1   seq14;
+    seq_2p2   seq15;
+    seq_2p3   seq16;
+    seq_2p4   seq17;
+    seq_2p5   seq18;
+    seq_2p6   seq19;
+    seq_2p7   seq20;
+    seq_2p8   seq21;
+    seq_2p9   seq22;
+    seq_2p10  seq23;
+    seq_2p11  seq24;
+    seq_2p12  seq25;
+    seq_2p13  seq26;
+
+    `uvm_component_utils(text_mode_test)
+
+    constraint limit {
+        command_number inside {[1:26]};
+    }
+
+    function new (string name , uvm_component parent);
+      super.new(name,parent);
+    endfunction:new
+
+    function void build_phase (uvm_phase phase);
+      super.build_phase(phase);
+      seq1  = seq_1p1::type_id::create("seq1");
+      seq2  = seq_1p2::type_id::create("seq2");
+      seq3  = seq_1p3::type_id::create("seq3");
+      seq4  = seq_1p4::type_id::create("seq4");
+      seq5  = seq_1p5::type_id::create("seq5");
+      seq6  = seq_1p6::type_id::create("seq6");
+      seq7  = seq_1p7::type_id::create("seq7");
+      seq8  = seq_1p8::type_id::create("seq8");
+      seq9  = seq_1p9::type_id::create("seq9");
+      seq10 = seq_1p10::type_id::create("seq10");
+      seq11 = seq_1p11::type_id::create("seq11");
+      seq12 = seq_1p12::type_id::create("seq12");
+      seq13 = seq_1p13::type_id::create("seq13");
+      seq14 = seq_2p1::type_id::create("seq14");
+      seq15 = seq_2p2::type_id::create("seq15");
+      seq16 = seq_2p3::type_id::create("seq16");
+      seq17 = seq_2p4::type_id::create("seq17");
+      seq18 = seq_2p5::type_id::create("seq18");
+      seq19 = seq_2p6::type_id::create("seq19");
+      seq20 = seq_2p7::type_id::create("seq20");
+      seq21 = seq_2p8::type_id::create("seq21");
+      seq22 = seq_2p9::type_id::create("seq22");
+      seq23 = seq_2p10::type_id::create("seq23");
+      seq24 = seq_2p11::type_id::create("seq24");
+      seq25 = seq_2p12::type_id::create("seq25");
+      seq26 = seq_2p13::type_id::create("seq26");
+      uvm_resource_db #(int)::set("coverage_cloud","text_coverage",0,null);
+    endfunction:build_phase
+
+    task run_phase (uvm_phase phase);
+      super.run_phase(phase);
+      phase.raise_objection(this);
+      while (coverage_hit==1'b0)
+        begin
+        randomize();
+        case (command_number)
+          1:
+            begin
+            seq1.start(env.agent._seq,null);
+            end
+          2:
+            begin
+            seq2.start(env.agent._seq,null);
+            end
+          3:
+            begin
+            seq3.start(env.agent._seq,null);
+            end
+          4:
+            begin
+            seq4.start(env.agent._seq,null);
+            end
+          5:
+            begin
+            seq5.start(env.agent._seq,null);
+            end
+          6:
+            begin
+            seq6.start(env.agent._seq,null);
+            end
+          7:
+            begin
+            seq7.start(env.agent._seq,null);
+            end
+          8:
+            begin
+            seq8.start(env.agent._seq,null);
+            end
+          9:
+            begin
+            seq9.start(env.agent._seq,null);
+            end
+          10:
+            begin
+            seq10.start(env.agent._seq,null);
+            end
+          11:
+            begin
+            seq11.start(env.agent._seq,null);
+            end
+          12:
+            begin
+            seq12.start(env.agent._seq,null);
+            end
+          13:
+            begin
+            seq13.start(env.agent._seq,null);
+            end
+          14:
+            begin
+            seq14.start(env.agent._seq,null);
+            end
+          15:
+            begin
+            seq15.start(env.agent._seq,null);
+            end
+          16:
+            begin
+            seq16.start(env.agent._seq,null);
+            end
+          17:
+            begin
+            seq17.start(env.agent._seq,null);
+            end
+          18:
+            begin
+            seq18.start(env.agent._seq,null);
+            end
+          19:
+            begin
+            seq19.start(env.agent._seq,null);
+            end
+          20:
+            begin
+            seq20.start(env.agent._seq,null);
+            end
+          21:
+            begin
+            seq21.start(env.agent._seq,null);
+            end
+          22:
+            begin
+            seq22.start(env.agent._seq,null);
+            end
+          23:
+            begin
+            seq23.start(env.agent._seq,null);
+            end
+          24:
+            begin
+            seq24.start(env.agent._seq,null);
+            end
+          25:
+            begin
+            seq25.start(env.agent._seq,null);
+            end
+          26:
+            begin
+            seq26.start(env.agent._seq,null);
+            end
+          default:
+            begin
+            `uvm_fatal("OUT OF RANGE","Command Number is Out of Range")
+            end
+        endcase // case (command_number)
+	evaluate_coverage();
+        end
+        phase.drop_objection(this);
+    endtask:run_phase
+
+    function void evaluate_coverage();
+       int text_coverage;
+       uvm_resource_db#(int)::read_by_name("coverage_cloud","text_coverage",text_coverage);
+       if(text_coverage >= 95) coverage_hit=1'b1;
+    endfunction // evaluate_coverage
+    
+ endclass:text_mode_test
+
+//-------------------------------------------------------------------------------------------------
+//
+//                        Coverage Driven Test
+//
+//-------------------------------------------------------------------------------------------------
+
+class cover_driven_test extends uart_base_test;
+
+   rand int unsigned testnumber;
+  
+   bit 	   coverage_hit=1'b0;
+
+   int 	   iteration=0;
+	   
+   parameter MAX_ITER=500;
+   
+   // Text write tests
+    seq_1p1   seq1;
+    seq_1p2   seq2;
+    seq_1p3   seq3;
+    seq_1p4   seq4;
+    seq_1p5   seq5;
+    seq_1p8   seq6;
+    seq_1p9   seq7;
+    seq_1p10  seq8;
+    seq_1p11  seq9;
+    seq_1p12  seq10;
+
+   // Text read tests
+    seq_2p1   seq11;
+    seq_2p2   seq12;
+    seq_2p3   seq13;
+   // seq_2p4   seq17;
+    seq_2p5   seq14;
+    seq_2p8   seq15;
+    seq_2p9   seq16;
+    seq_2p10  seq17;
+    seq_2p11  seq18;
+    seq_2p12  seq19;
+
+   // NOP
+   seq_3p1    seq20;
+   seq_3p2    seq21;   
+   seq_3p3    seq22;
+   seq_4p1    seq23;   
+   seq_4p2    seq24;
+   seq_4p3    seq25;
+
+   // Write Command Mode
+   seq_5p2    seq26;
+   seq_5p3    seq27;
+   seq_5p4    seq28;
+   seq_5p5    seq29;
+   seq_5p6    seq30;   
+   seq_5p7    seq31;
+   seq_5p8    seq32;   
+   seq_5p9    seq33;      
+   seq_5p10   seq34;
+
+   // Read Command Mode
+   seq_6p2    seq35;
+   seq_6p3    seq36;
+   seq_6p4    seq37;
+   seq_6p5    seq38;
+   seq_6p6    seq39;   
+   seq_6p7    seq40;
+   seq_6p8    seq41;   
+   seq_6p9    seq42;      
+   seq_6p10   seq43;
+
+   // GRANT test
+   seq_7p1    seq44;
+   seq_7p2    seq45;
+   
+
+   `uvm_component_utils(cover_driven_test)
+
+   constraint validtest{testnumber inside{[0:45]};
+                        testnumber != 13;
+                        testnumber != 9;
+                        testnumber != 19;
+                        testnumber != 21;
+                        testnumber != 24;}
+   
+   function new (string name,uvm_component parent);
+      super.new(name,parent);
+   endfunction // new
+
+   function void build_phase (uvm_phase phase);
+      super.build_phase(phase);
+      seq1	= seq_1p1::type_id::create("seq1");
+      seq2	= seq_1p2::type_id::create("seq2");
+      seq3	= seq_1p3::type_id::create("seq3");
+      seq4	= seq_1p4::type_id::create("seq4");
+      seq5	= seq_1p5::type_id::create("seq5");
+      seq6	= seq_1p8::type_id::create("seq6");
+      seq7	= seq_1p9::type_id::create("seq7");
+      seq8	= seq_1p10::type_id::create("seq8");
+      seq9	= seq_1p11::type_id::create("seq9");
+      seq10	= seq_1p12::type_id::create("seq10");
+      seq11	= seq_2p1::type_id::create("seq11");
+      seq12	= seq_2p2::type_id::create("seq12");
+      seq13	= seq_2p3::type_id::create("seq13");
+      //seq17	= seq_2p4::type_id::create("seq17");
+      seq14	= seq_2p5::type_id::create("seq14");
+      seq15	= seq_2p8::type_id::create("seq15");
+      seq16	= seq_2p9::type_id::create("seq16");
+      seq17	= seq_2p10::type_id::create("seq17");
+      seq18	= seq_2p11::type_id::create("seq18");
+      seq19	= seq_2p12::type_id::create("seq19");
+      seq20	= seq_3p1::type_id::create("seq20");
+      seq21	= seq_3p2::type_id::create("seq21");
+      seq22	= seq_3p3::type_id::create("seq22");
+      seq23	= seq_4p1::type_id::create("seq23");
+      seq24	= seq_4p2::type_id::create("seq24");
+      seq25	= seq_4p3::type_id::create("seq25");
+      seq26	= seq_5p2::type_id::create("seq26");
+      seq27	= seq_5p3::type_id::create("seq27");
+      seq28	= seq_5p4::type_id::create("seq28");
+      seq29	= seq_5p5::type_id::create("seq29");
+      seq30	= seq_5p6::type_id::create("seq30");
+      seq31	= seq_5p7::type_id::create("seq31");
+      seq32	= seq_5p8::type_id::create("seq32");
+      seq33	= seq_5p9::type_id::create("seq33");
+      seq34	= seq_5p10::type_id::create("seq34");
+      seq35	= seq_6p2::type_id::create("seq35");
+      seq36	= seq_6p3::type_id::create("seq36");
+      seq37	= seq_6p4::type_id::create("seq37");
+      seq38	= seq_6p5::type_id::create("seq38");
+      seq39	= seq_6p6::type_id::create("seq39");
+      seq40	= seq_6p7::type_id::create("seq40");
+      seq41	= seq_6p8::type_id::create("seq41");
+      seq42	= seq_6p9::type_id::create("seq42");
+      seq43	= seq_6p10::type_id::create("seq43");
+      seq44	= seq_7p1::type_id::create("seq44");
+      seq45	= seq_7p2::type_id::create("seq45");
+   endfunction // build_phase
+
+   task run_phase (uvm_phase phase);
+      super.run_phase(phase);
+      phase.raise_objection(this);
+      while(coverage_hit==1'b0 && (iteration < MAX_ITER)) begin
+     // while(iteration < 1000) begin
+	 iteration++;
+	 randomize();
+	 case(testnumber)
+	   0:
+	     begin
+		seq1.start(env.agent._seq,null);
+	     end
+	   1:
+	     begin
+		seq2.start(env.agent._seq,null);
+	     end
+	   2:
+	     begin
+		seq3.start(env.agent._seq,null);
+	     end
+	   3:
+	     begin
+		seq4.start(env.agent._seq,null);
+	     end
+	   4:
+	     begin
+		seq5.start(env.agent._seq,null);
+	     end
+	   5:
+	     begin
+		seq6.start(env.agent._seq,null);
+	     end
+	   6:
+	     begin
+		seq7.start(env.agent._seq,null);
+	     end
+	   7:
+	     begin
+		seq8.start(env.agent._seq,null);
+	     end
+	   8:
+	     begin
+		seq9.start(env.agent._seq,null);
+	     end
+	   9:
+	     begin
+		seq10.start(env.agent._seq,null);
+	     end
+	   10:
+	     begin
+		seq11.start(env.agent._seq,null);
+	     end
+	   11:
+	     begin
+		seq12.start(env.agent._seq,null);
+	     end
+	   12:
+	     begin
+		seq13.start(env.agent._seq,null);
+	     end
+	  /* 13:
+	     begin
+		seq17.start(env.agent._seq,null);
+	     end*/
+	   14:
+	     begin
+		seq14.start(env.agent._seq,null);
+	     end
+	   15:
+	     begin
+		seq15.start(env.agent._seq,null);
+	     end
+	   16:
+	     begin
+		seq16.start(env.agent._seq,null);
+	     end
+	   17:
+	     begin
+		seq17.start(env.agent._seq,null);
+	     end
+	   18:
+	     begin
+		seq18.start(env.agent._seq,null);
+	     end
+	   19:
+	     begin
+		seq19.start(env.agent._seq,null);
+	     end
+	   20:
+	     begin
+		seq20.start(env.agent._seq,null);
+	     end
+	   21:
+	     begin
+		seq21.start(env.agent._seq,null);
+	     end
+	   22:
+	     begin
+		seq22.start(env.agent._seq,null);
+	     end
+	   23:
+	     begin
+		seq23.start(env.agent._seq,null);
+	     end
+	   24:
+	     begin
+		seq24.start(env.agent._seq,null);
+	     end
+	   25:
+	     begin
+		seq25.start(env.agent._seq,null);
+	     end
+	   26:
+	     begin
+		seq26.start(env.agent._seq,null);
+	     end
+	   27:
+	     begin
+		seq27.start(env.agent._seq,null);
+	     end
+	   28:
+	     begin
+		seq28.start(env.agent._seq,null);
+	     end
+	   29:
+	     begin
+		seq29.start(env.agent._seq,null);
+	     end
+	   30:
+	     begin
+		seq30.start(env.agent._seq,null);
+	     end
+	   31:
+	     begin
+		seq31.start(env.agent._seq,null);
+	     end
+	   32:
+	     begin
+		seq32.start(env.agent._seq,null);
+	     end
+	   33:
+	     begin
+		seq33.start(env.agent._seq,null);
+	     end
+	   34:
+	     begin
+		seq34.start(env.agent._seq,null);
+	     end
+	   35:
+	     begin
+		seq35.start(env.agent._seq,null);
+	     end
+	   36:
+	     begin
+		seq36.start(env.agent._seq,null);
+	     end
+	   37:
+	     begin
+		seq37.start(env.agent._seq,null);
+	     end
+	   38:
+	     begin
+		seq38.start(env.agent._seq,null);
+	     end
+	   39:
+	     begin
+		seq39.start(env.agent._seq,null);
+	     end
+	   40:
+	     begin
+		seq40.start(env.agent._seq,null);
+	     end
+	   41:
+	     begin
+		seq41.start(env.agent._seq,null);
+	     end
+	   42:
+	     begin
+		seq42.start(env.agent._seq,null);
+	     end
+	   43:
+	     begin
+		seq43.start(env.agent._seq,null);
+	     end
+	   44:
+	     begin
+		seq44.start(env.agent._seq,null);
+	     end
+	   45:
+	     begin
+		seq45.start(env.agent._seq,null);
+	     end
+	   default:
+	     begin
+		`uvm_error("TE","Invalid_test")
+	     end
+	 endcase // case (testnumber)
+	 evaluate_coverage();
+      end // while (coverage_hit==1'b0)
+      phase.drop_objection(this);      
+   endtask // run_phase
+   
+   function void evaluate_coverage();
+       int text_cov;
+       int bin_cov;
+       int mode_cov;
+       uvm_resource_db#(int)::read_by_name("coverage_cloud","text_coverage",text_cov);
+      uvm_resource_db#(int)::read_by_name("coverage_cloud","general_coverage",mode_cov);
+      uvm_resource_db#(int)::read_by_name("coverage_cloud","binary_coverage",bin_cov);      
+       if((text_cov >= hit_text_cov) &&
+	  (bin_cov  >= hit_bin_cov) &&
+	  (mode_cov >= hit_mode_cov)) coverage_hit=1'b1;
+   endfunction // evaluate_coverage
+
+   function void report_phase(uvm_phase phase);
+      int  text_cov;
+      int  mode_cov;
+      int  bin_cov;
+      super.report_phase(phase);
+     if(!(iteration<MAX_ITER))
+       begin
+	  uvm_resource_db#(int)::read_by_name("coverage_cloud","text_coverage",text_cov);
+	  uvm_resource_db#(int)::read_by_name("coverage_cloud","binary_coverage",bin_cov);
+	  uvm_resource_db#(int)::read_by_name("coverage_cloud","general_coverage",mode_cov);
+	`uvm_warning("SIM",$sformatf("coverage not hit and reached \n textcov:%0d\nmodecov:%0d\nbincov:%0d",text_cov,mode_cov,bin_cov));
+       end
+     else begin
+	`uvm_info("SIM",$sformatf("Simulation hit the coverage successfully by %0d transactions",iteration),UVM_NONE);
+     end
+   endfunction // report_phase
+   
+endclass // cover_driven_test

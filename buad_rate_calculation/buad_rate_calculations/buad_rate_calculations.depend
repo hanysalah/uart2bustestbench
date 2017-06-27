@@ -1,0 +1,4 @@
+# depslib dependency file v1.0
+1452501572 source:c:\users\pc2\uart2bus\uvm_testbench\buad_rate_calculation\buad_rate_calculations\main.cpp
+	<iostream>
+
